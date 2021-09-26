@@ -1,0 +1,15 @@
+{
+    "configurations": [
+        {
+            "name": "Debug",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            // "program": "${workspaceRoot}/Process.go",
+            "program": "${workspaceRoot}/SharedResources.go",
+            "env": {},
+            "args": ["1", ":10004", ":10003"],
+            "showLog": true
+        }
+    ]
+}
