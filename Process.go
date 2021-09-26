@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,8 @@ var myId int
 var myClock int
 var ConnMap map[int]*net.UDPConn
 var idMap map[int]int
+var process_state string
+var queue []int
 
 func readInput(ch chan string) {
 	// Rotina não-bloqueante que “escuta” o stdin
@@ -50,34 +53,64 @@ func doServerJob() {
 		//Escrever na tela a msg recebida (indicando o
 		//endereço de quem enviou)
 		n, addr, err := ServConn.ReadFromUDP(buf)
-		fmt.Println("Received ", string(buf[0:n]), " from ", addr)
+
+		received_msg := strings.Split(string(buf[0:n]), ":")
+		fmt.Println("Received id:", received_msg[0], "clock:", received_msg[1], "message:", received_msg[2], "from ", addr)
+
+		received_clock, _ := strconv.Atoi(received_msg[1])
+		if received_clock < myClock {
+			received_id, _ := strconv.Atoi(received_msg[0])
+			fmt.Println("Need reply")
+			go doClientJob(received_id, "REPLY", "oi")
+		} else {
+			fmt.Println("Don't need reply")
+		}
 		receivedClock, _ := strconv.Atoi(string(buf[0:n]))
 		myClock = int(math.Max(float64(myClock), float64(receivedClock)) + 1)
 		fmt.Println("My new clock is: ", myClock)
-
 		if err != nil {
 			fmt.Println("Error: ", err)
 		}
 
 	}
 }
-func doClientJob(otherProcess int, i int, x string) {
+func doClientJob(otherProcess int, type_message string, x string) {
 	//Enviar uma mensagem (com valor i) para o servidor do processo
 	//otherServer
-	if otherProcess == 0 {
-		cs_msg := "testando"
-		cs_buf := []byte(cs_msg)
-		_, err := ConnMap[idMap[otherProcess]].Write(cs_buf)
+	if type_message == "REPLY" {
+		myId_str := strconv.Itoa(myId)
+		myClock_str := strconv.Itoa(myClock)
+		rep_msg := myId_str + ":" + myClock_str + ":" + "reply"
+		rep_buf := []byte(rep_msg)
+		_, err := ConnMap[idMap[otherProcess]].Write(rep_buf)
 		if err != nil {
-			fmt.Println(cs_msg, err)
+			fmt.Println(rep_msg, err)
 		}
-
 	} else {
-		msg := strconv.Itoa(myClock)
-		buf := []byte(msg)
-		_, err := ConnMap[idMap[otherProcess]].Write(buf)
-		if err != nil {
-			fmt.Println(msg, err)
+		if otherProcess == 0 {
+			myId_str := strconv.Itoa(myId)
+			myClock_str := strconv.Itoa(myClock)
+			cs_msg := myId_str + ":" + myClock_str + ":" + "hello world"
+			req_msg := myId_str + ":" + myClock_str + ":" + "request"
+			cs_buf := []byte(cs_msg)
+			req_buf := []byte(req_msg)
+			for dest_ids := range idMap {
+				ConnMap[idMap[dest_ids]].Write(req_buf)
+			}
+			process_state = "WANTED"
+			_, err := ConnMap[idMap[otherProcess]].Write(cs_buf)
+			if err != nil {
+				fmt.Println(cs_msg, err)
+			}
+		} else {
+			myId_str := strconv.Itoa(myId)
+			myClock_str := strconv.Itoa(myClock)
+			req_msg := myId_str + ":" + myClock_str + ":" + "request"
+			req_buf := []byte(req_msg)
+			_, err := ConnMap[idMap[otherProcess]].Write(req_buf)
+			if err != nil {
+				fmt.Println(req_msg, err)
+			}
 		}
 	}
 	time.Sleep(time.Second * 1)
@@ -90,6 +123,7 @@ func initConnections() {
 	idMap[1] = 10002
 	idMap[2] = 10003
 	idMap[3] = 10004
+	process_state = "RELEASED"
 	myClock = 0
 	myId, _ = strconv.Atoi(os.Args[1])
 	myPort = ":" + strconv.Itoa(idMap[myId])
@@ -153,7 +187,7 @@ func main() {
 				dest_id, input_error := strconv.Atoi(x)
 				// CheckError(input_error)
 				if input_error == nil {
-					go doClientJob(dest_id, 100, x)
+					go doClientJob(dest_id, "test", x)
 				} else {
 					fmt.Printf("Caractere inválido!!\n")
 				}

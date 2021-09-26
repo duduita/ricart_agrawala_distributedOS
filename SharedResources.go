@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -23,7 +24,8 @@ func doCSServerJob(CSConn *net.UDPConn) {
 		//Escrever na tela a msg recebida (indicando o
 		//endereço de quem enviou)
 		n, addr, err := CSConn.ReadFromUDP(buf)
-		fmt.Println("Received ", string(buf[0:n]), " from ", addr)
+		received_msg := strings.Split(string(buf[0:n]), ":")
+		fmt.Println("Received id:", received_msg[0], "clock:", received_msg[1], "message:", received_msg[2], "from ", addr)
 
 		if err != nil {
 			fmt.Println("Error: ", err)
