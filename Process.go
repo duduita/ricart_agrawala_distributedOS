@@ -23,6 +23,7 @@ var ConnMap map[int]*net.UDPConn
 var idMap map[int]int
 var process_state string
 var queue []int
+var reply_counter int
 
 func readInput(ch chan string) {
 	// Rotina não-bloqueante que “escuta” o stdin
@@ -32,7 +33,6 @@ func readInput(ch chan string) {
 		ch <- string(text)
 	}
 }
-
 func CheckError(err error) {
 	if err != nil {
 		fmt.Println("Erro: ", err)
@@ -45,74 +45,90 @@ func PrintError(err error) {
 	}
 }
 func doServerJob() {
-	//Loop infinito mesmo
 	buf := make([]byte, 1024)
 
 	for {
-		//Ler (uma vez somente) da conexão UDP a mensagem
-		//Escrever na tela a msg recebida (indicando o
-		//endereço de quem enviou)
+		// leitura da mensagem
 		n, addr, err := ServConn.ReadFromUDP(buf)
-
 		received_msg := strings.Split(string(buf[0:n]), ":")
 		fmt.Println("Received id:", received_msg[0], "clock:", received_msg[1], "message:", received_msg[2], "from ", addr)
-
 		received_clock, _ := strconv.Atoi(received_msg[1])
-		if received_clock < myClock {
-			received_id, _ := strconv.Atoi(received_msg[0])
-			fmt.Println("Need reply")
-			go doClientJob(received_id, "REPLY", "oi")
-		} else {
-			fmt.Println("Don't need reply")
-		}
-		receivedClock, _ := strconv.Atoi(string(buf[0:n]))
-		myClock = int(math.Max(float64(myClock), float64(receivedClock)) + 1)
-		fmt.Println("My new clock is: ", myClock)
-		if err != nil {
-			fmt.Println("Error: ", err)
+		received_id, _ := strconv.Atoi(received_msg[0])
+
+		if received_msg[2] == "REPLY" {
+			reply_counter++
+			if reply_counter == nServers-1 {
+				process_state = "HELD"
+				time.Sleep(time.Second * 1)
+				reply_counter = 0
+				myId_str := strconv.Itoa(myId)
+				myClock_str := strconv.Itoa(myClock)
+				rep_msg := myId_str + ":" + myClock_str + ":" + "REPLY"
+				rep_buf := []byte(rep_msg)
+				for awaiting_processess := range queue {
+					ConnMap[idMap[awaiting_processess]].Write(rep_buf)
+				}
+				queue = nil
+				process_state = "RELEASED"
+			}
 		}
 
+		if received_msg[2] == "REQUEST" && process_state == "RELEASED" || received_clock <= myClock && process_state == "WANTED" || process_state == "HELD" {
+			priority_id := received_id
+			if received_clock == myClock {
+				priority_id = int(math.Min(float64(received_id), float64(myId)))
+			}
+			fmt.Println("Need reply")
+			myId_str := strconv.Itoa(myId)
+			myClock_str := strconv.Itoa(myClock)
+			rep_msg := myId_str + ":" + myClock_str + ":" + "REPLY"
+			rep_buf := []byte(rep_msg)
+			_, err := ConnMap[idMap[priority_id]].Write(rep_buf)
+			if err != nil {
+				fmt.Println(rep_msg, err)
+			}
+		} else {
+			queue = append(queue, received_id)
+			fmt.Println("Don't need reply, so queue it")
+			receivedClock, _ := strconv.Atoi(string(buf[0:n]))
+			myClock = int(math.Max(float64(myClock), float64(receivedClock)) + 1)
+			fmt.Println("My new clock is: ", myClock)
+			if err != nil {
+				fmt.Println("Error: ", err)
+			}
+		}
 	}
 }
 func doClientJob(otherProcess int, type_message string, x string) {
 	//Enviar uma mensagem (com valor i) para o servidor do processo
 	//otherServer
-	if type_message == "REPLY" {
+
+	if otherProcess == 0 {
+		process_state = "WANTED"
 		myId_str := strconv.Itoa(myId)
 		myClock_str := strconv.Itoa(myClock)
-		rep_msg := myId_str + ":" + myClock_str + ":" + "reply"
-		rep_buf := []byte(rep_msg)
-		_, err := ConnMap[idMap[otherProcess]].Write(rep_buf)
+		cs_msg := myId_str + ":" + myClock_str + ":" + "hello world"
+		req_msg := myId_str + ":" + myClock_str + ":" + "REQUEST"
+		cs_buf := []byte(cs_msg)
+		req_buf := []byte(req_msg)
+		for dest_ids := range idMap {
+			ConnMap[idMap[dest_ids]].Write(req_buf)
+		}
+		_, err := ConnMap[idMap[otherProcess]].Write(cs_buf)
 		if err != nil {
-			fmt.Println(rep_msg, err)
+			fmt.Println(cs_msg, err)
 		}
 	} else {
-		if otherProcess == 0 {
-			myId_str := strconv.Itoa(myId)
-			myClock_str := strconv.Itoa(myClock)
-			cs_msg := myId_str + ":" + myClock_str + ":" + "hello world"
-			req_msg := myId_str + ":" + myClock_str + ":" + "request"
-			cs_buf := []byte(cs_msg)
-			req_buf := []byte(req_msg)
-			for dest_ids := range idMap {
-				ConnMap[idMap[dest_ids]].Write(req_buf)
-			}
-			process_state = "WANTED"
-			_, err := ConnMap[idMap[otherProcess]].Write(cs_buf)
-			if err != nil {
-				fmt.Println(cs_msg, err)
-			}
-		} else {
-			myId_str := strconv.Itoa(myId)
-			myClock_str := strconv.Itoa(myClock)
-			req_msg := myId_str + ":" + myClock_str + ":" + "request"
-			req_buf := []byte(req_msg)
-			_, err := ConnMap[idMap[otherProcess]].Write(req_buf)
-			if err != nil {
-				fmt.Println(req_msg, err)
-			}
+		myId_str := strconv.Itoa(myId)
+		myClock_str := strconv.Itoa(myClock)
+		req_msg := myId_str + ":" + myClock_str + ":" + "REQUEST"
+		req_buf := []byte(req_msg)
+		_, err := ConnMap[idMap[otherProcess]].Write(req_buf)
+		if err != nil {
+			fmt.Println(req_msg, err)
 		}
 	}
+
 	time.Sleep(time.Second * 1)
 }
 
