@@ -25,6 +25,14 @@ var process_state string
 var queue []int
 var reply_counter int
 
+func obtain_max(a int, b int) int {
+	if a > b {
+		return a + 1
+	} else {
+		return b + 1
+	}
+}
+
 func readInput(ch chan string) {
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -42,6 +50,33 @@ func PrintError(err error) {
 	if err != nil {
 		fmt.Println("Erro: ", err)
 	}
+}
+func doCSJob() {
+	// Usa a CS
+	fmt.Println("Entrei na CS")
+	myId_str := strconv.Itoa(myId)
+	myClock_str := strconv.Itoa(myClock)
+	cs_msg := myId_str + ":" + myClock_str + ":" + "i'am in the CS now"
+	cs_buf := []byte(cs_msg)
+	_, err := ConnMap[idMap[0]].Write(cs_buf)
+	CheckError(err)
+	process_state = "HELD"
+	time.Sleep(time.Second * 10)
+
+	// Após utilizar a CS, envia REPLY para todos da sua fila
+	rep_msg_all := myId_str + ":" + myClock_str + ":" + "REPLY"
+	rep_buf_all := []byte(rep_msg_all)
+	if len(queue) > 0 {
+		for _, awaiting_processess := range queue {
+			ConnMap[idMap[awaiting_processess]].Write(rep_buf_all)
+		}
+	}
+
+	// Reinicializa o processo
+	reply_counter = 0
+	queue = nil
+	process_state = "RELEASED"
+	fmt.Println("Sai da CS")
 }
 func doServerJob() {
 	buf := make([]byte, 1024)
@@ -65,28 +100,7 @@ func doServerJob() {
 
 			// se receber reply de todo mundo, entra na CS
 			if reply_counter == nServers-1 {
-
-				// Usa a CS
-				myId_str := strconv.Itoa(myId)
-				myClock_str := strconv.Itoa(myClock)
-				cs_msg := myId_str + ":" + myClock_str + ":" + "i'am in the CS now"
-				cs_buf := []byte(cs_msg)
-				_, err := ConnMap[idMap[0]].Write(cs_buf)
-				CheckError(err)
-				process_state = "HELD"
-				time.Sleep(time.Second * 1)
-
-				// Após utilizar a CS, envia REPLY para todos da sua fila
-				rep_msg := myId_str + ":" + myClock_str + ":" + "REPLY"
-				rep_buf := []byte(rep_msg)
-				for awaiting_processess := range queue {
-					ConnMap[idMap[awaiting_processess]].Write(rep_buf)
-				}
-
-				// Reinicializa o processo
-				reply_counter = 0
-				queue = nil
-				process_state = "RELEASED"
+				go doCSJob()
 			}
 			// Se receber um request de si mesmo
 		} else if received_id == myId {
@@ -126,7 +140,7 @@ func doServerJob() {
 func doClientJob(otherProcess int, type_message string, x string) {
 
 	// para entrar na CS
-	if otherProcess == 0 {
+	if otherProcess == 0 && process_state == "RELEASED" {
 		// Altera de RELEASED para WANTED
 		process_state = "WANTED"
 		myClock++
@@ -143,6 +157,8 @@ func doClientJob(otherProcess int, type_message string, x string) {
 		}
 
 		time.Sleep(time.Second * 1)
+	} else {
+		fmt.Println("entrada ignorada!")
 	}
 }
 
