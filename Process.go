@@ -26,7 +26,6 @@ var queue []int
 var reply_counter int
 
 func readInput(ch chan string) {
-	// Rotina não-bloqueante que “escuta” o stdin
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		text, _, _ := reader.ReadLine()
@@ -55,109 +54,121 @@ func doServerJob() {
 		received_clock, _ := strconv.Atoi(received_msg[1])
 		received_id, _ := strconv.Atoi(received_msg[0])
 
+		// se receber um reply
 		if received_msg[2] == "REPLY" {
 			reply_counter++
+
+			// Quando receber reply, atualizar o clock para ficar coerente com quem enviou
+			receivedClock, _ := strconv.Atoi(string(buf[0:n]))
+			myClock = int(math.Max(float64(myClock), float64(receivedClock)) + 1)
+			fmt.Println("My new clock is: ", myClock)
+
+			// se receber reply de todo mundo, entra na CS
 			if reply_counter == nServers-1 {
-				process_state = "HELD"
-				time.Sleep(time.Second * 1)
-				reply_counter = 0
+
+				// Usa a CS
 				myId_str := strconv.Itoa(myId)
 				myClock_str := strconv.Itoa(myClock)
+				cs_msg := myId_str + ":" + myClock_str + ":" + "i'am in the CS now"
+				cs_buf := []byte(cs_msg)
+				_, err := ConnMap[idMap[0]].Write(cs_buf)
+				CheckError(err)
+				process_state = "HELD"
+				time.Sleep(time.Second * 1)
+
+				// Após utilizar a CS, envia REPLY para todos da sua fila
 				rep_msg := myId_str + ":" + myClock_str + ":" + "REPLY"
 				rep_buf := []byte(rep_msg)
 				for awaiting_processess := range queue {
 					ConnMap[idMap[awaiting_processess]].Write(rep_buf)
 				}
+
+				// Reinicializa o processo
+				reply_counter = 0
 				queue = nil
 				process_state = "RELEASED"
 			}
-		}
+			// Se receber um request de si mesmo
+		} else if received_id == myId {
+			fmt.Println("Don't need reply, it's just a intern action")
 
-		if received_msg[2] == "REQUEST" && process_state == "RELEASED" || received_clock <= myClock && process_state == "WANTED" || process_state == "HELD" {
+			// Quando houver uma ação interna, incrementar o clock
+			myClock++
+			fmt.Println("My new clock is: ", myClock)
+			CheckError(err)
+			// Se estiver HELD ou WANTED com clock menor, adiciona em sua fila
+		} else if process_state == "HELD" || process_state == "WANTED" && received_clock > myClock {
+			queue = append(queue, received_id)
+			fmt.Println("Queue request without replying")
+
+			// Quando receber um request, atualizar o clock para ficar coerente com quem enviou
+			receivedClock, _ := strconv.Atoi(string(buf[0:n]))
+			myClock = int(math.Max(float64(myClock), float64(receivedClock)) + 1)
+			fmt.Println("My new clock is: ", myClock)
+		} else {
+			// se empatarem no clock, ganha o menor id
 			priority_id := received_id
 			if received_clock == myClock {
 				priority_id = int(math.Min(float64(received_id), float64(myId)))
 			}
-			fmt.Println("Need reply")
+
+			// Quando enviar um reply, não incrementar o clock
+			fmt.Println("RELEASED or WANTED with lower timestamp: need reply")
 			myId_str := strconv.Itoa(myId)
 			myClock_str := strconv.Itoa(myClock)
 			rep_msg := myId_str + ":" + myClock_str + ":" + "REPLY"
 			rep_buf := []byte(rep_msg)
 			_, err := ConnMap[idMap[priority_id]].Write(rep_buf)
-			if err != nil {
-				fmt.Println(rep_msg, err)
-			}
-		} else {
-			queue = append(queue, received_id)
-			fmt.Println("Don't need reply, so queue it")
-			receivedClock, _ := strconv.Atoi(string(buf[0:n]))
-			myClock = int(math.Max(float64(myClock), float64(receivedClock)) + 1)
-			fmt.Println("My new clock is: ", myClock)
-			if err != nil {
-				fmt.Println("Error: ", err)
-			}
+			CheckError(err)
 		}
 	}
 }
 func doClientJob(otherProcess int, type_message string, x string) {
-	//Enviar uma mensagem (com valor i) para o servidor do processo
-	//otherServer
 
+	// para entrar na CS
 	if otherProcess == 0 {
+		// Altera de RELEASED para WANTED
 		process_state = "WANTED"
-		myId_str := strconv.Itoa(myId)
-		myClock_str := strconv.Itoa(myClock)
-		cs_msg := myId_str + ":" + myClock_str + ":" + "hello world"
-		req_msg := myId_str + ":" + myClock_str + ":" + "REQUEST"
-		cs_buf := []byte(cs_msg)
-		req_buf := []byte(req_msg)
-		for dest_ids := range idMap {
-			ConnMap[idMap[dest_ids]].Write(req_buf)
-		}
-		_, err := ConnMap[idMap[otherProcess]].Write(cs_buf)
-		if err != nil {
-			fmt.Println(cs_msg, err)
-		}
-	} else {
+		myClock++
 		myId_str := strconv.Itoa(myId)
 		myClock_str := strconv.Itoa(myClock)
 		req_msg := myId_str + ":" + myClock_str + ":" + "REQUEST"
 		req_buf := []byte(req_msg)
-		_, err := ConnMap[idMap[otherProcess]].Write(req_buf)
-		if err != nil {
-			fmt.Println(req_msg, err)
-		}
-	}
 
-	time.Sleep(time.Second * 1)
+		// Multicast request para todos processos
+		for dest_ids := range idMap {
+			if dest_ids != 0 && dest_ids != myId {
+				ConnMap[idMap[dest_ids]].Write(req_buf)
+			}
+		}
+
+		time.Sleep(time.Second * 1)
+	}
 }
 
 func initConnections() {
+	// Inicializando variáveis globais
 	ConnMap = make(map[int]*net.UDPConn)
 	idMap = make(map[int]int)
 	idMap[0] = 10000
 	idMap[1] = 10002
 	idMap[2] = 10003
 	idMap[3] = 10004
+
+	// Inicializando o processo
 	process_state = "RELEASED"
 	myClock = 0
 	myId, _ = strconv.Atoi(os.Args[1])
 	myPort = ":" + strconv.Itoa(idMap[myId])
+
+	// Obtendo os outros processos
 	nServers = len(os.Args) - 2
-	/*Esse 2 tira o nome (no caso Process) e tira a primeira porta (que
-	é a minha). As demais portas são dos outros processos*/
-	// CliConn = make([]*net.UDPConn, nServers)
-
-	/*Outros códigos para deixar ok a conexão do meu servidor (onde re-
-	cebo msgs). O processo já deve ficar habilitado a receber msgs.*/
-
 	ServerAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1"+myPort)
 	CheckError(err)
 	ServConn, err = net.ListenUDP("udp", ServerAddr)
 	CheckError(err)
-	/*Outros códigos para deixar ok as conexões com os servidores dos
-	outros processos. Colocar tais conexões no vetor CliConn.*/
 
+	// Gerando o mapa de connections
 	for servidores := 0; servidores < nServers; servidores++ {
 		ServerAddr, err := net.ResolveUDPAddr("udp",
 			"127.0.0.1"+os.Args[2+servidores])
@@ -166,36 +177,29 @@ func initConnections() {
 		port_number_str := os.Args[2+servidores]
 		port_number, _ := strconv.Atoi(port_number_str[1:])
 		ConnMap[port_number] = Conn
-		// CliConn[servidores] = Conn
 		CheckError(err)
 	}
+
+	// Adicionando o sharedResource idMap[0]
 	cs_port := strconv.Itoa(idMap[0])
 	ServerAddr, err = net.ResolveUDPAddr("udp",
 		"127.0.0.1"+":"+cs_port)
 	CheckError(err)
 	Conn, err := net.DialUDP("udp", nil, ServerAddr)
 	ConnMap[idMap[0]] = Conn
-	// CliConn[servidores] = Conn
 	CheckError(err)
 }
 func main() {
 	initConnections()
-	/*O fechamento de conexões deve ficar aqui, assim só fecha
-	conexão quando a main morrer*/
 	defer ServConn.Close()
 	for _, connection := range ConnMap {
 		defer connection.Close()
 	}
 
-	/*Todo Process fará a mesma coisa: ficar ouvindo mensagens e man-
-	dar infinitos i’s para os outros processos*/
-
 	ch := make(chan string) //canal que guarda itens lidos do teclado
 	go readInput(ch)        //chamar rotina que ”escuta” o teclado
 	go doServerJob()
 	for {
-		// Verificar (de forma não bloqueante) se tem algo no
-		// stdin (input do terminal)
 		select {
 		case x, valid := <-ch:
 			if valid {
@@ -217,6 +221,5 @@ func main() {
 		}
 		// Esperar um pouco
 		time.Sleep(time.Second * 1)
-
 	}
 }
