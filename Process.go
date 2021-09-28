@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,15 +25,15 @@ var idMap map[int]int
 var process_state string
 var queue []int
 var reply_counter int
+var mutex sync.Mutex
 
 func obtain_max(a int, b int) int {
 	if a > b {
-		return a + 1
+		return a
 	} else {
-		return b + 1
+		return b
 	}
 }
-
 func readInput(ch chan string) {
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -56,14 +57,18 @@ func doCSJob() {
 	fmt.Println("Entrei na CS")
 	myId_str := strconv.Itoa(myId)
 	myClock_str := strconv.Itoa(myClock)
-	cs_msg := myId_str + ":" + myClock_str + ":" + "i'am in the CS now"
+	cs_msg := myId_str + " is in the CS now!"
 	cs_buf := []byte(cs_msg)
 	_, err := ConnMap[idMap[0]].Write(cs_buf)
 	CheckError(err)
+	mutex.Lock()
 	process_state = "HELD"
+	mutex.Unlock()
+	fmt.Println("HELD")
 	time.Sleep(time.Second * 10)
 
 	// Após utilizar a CS, envia REPLY para todos da sua fila
+	fmt.Println("Enviando reply para todos")
 	rep_msg_all := myId_str + ":" + myClock_str + ":" + "REPLY"
 	rep_buf_all := []byte(rep_msg_all)
 	if len(queue) > 0 {
@@ -73,9 +78,12 @@ func doCSJob() {
 	}
 
 	// Reinicializa o processo
+	mutex.Lock()
 	reply_counter = 0
 	queue = nil
 	process_state = "RELEASED"
+	mutex.Unlock()
+	fmt.Println("RELEASED")
 	fmt.Println("Sai da CS")
 }
 func doServerJob() {
@@ -83,20 +91,24 @@ func doServerJob() {
 
 	for {
 		// leitura da mensagem
-		n, addr, err := ServConn.ReadFromUDP(buf)
+		n, _, err := ServConn.ReadFromUDP(buf)
 		received_msg := strings.Split(string(buf[0:n]), ":")
-		fmt.Println("Received id:", received_msg[0], "clock:", received_msg[1], "message:", received_msg[2], "from ", addr)
+		fmt.Println("Received:", received_msg[2], "clock:", received_msg[1], "from:", received_msg[0])
 		received_clock, _ := strconv.Atoi(received_msg[1])
 		received_id, _ := strconv.Atoi(received_msg[0])
 
 		// se receber um reply
 		if received_msg[2] == "REPLY" {
+			mutex.Lock()
 			reply_counter++
+			mutex.Unlock()
 
 			// Quando receber reply, atualizar o clock para ficar coerente com quem enviou
 			receivedClock, _ := strconv.Atoi(string(buf[0:n]))
-			myClock = int(math.Max(float64(myClock), float64(receivedClock)) + 1)
-			fmt.Println("My new clock is: ", myClock)
+			mutex.Lock()
+			myClock = obtain_max(myClock, receivedClock) + 1
+			mutex.Unlock()
+			fmt.Println("My new clock after receive a reply: ", myClock)
 
 			// se receber reply de todo mundo, entra na CS
 			if reply_counter == nServers-1 {
@@ -107,18 +119,25 @@ func doServerJob() {
 			fmt.Println("Don't need reply, it's just a intern action")
 
 			// Quando houver uma ação interna, incrementar o clock
+			mutex.Lock()
 			myClock++
-			fmt.Println("My new clock is: ", myClock)
+			mutex.Unlock()
+			fmt.Println("My new clock after an intern action: ", myClock)
 			CheckError(err)
 			// Se estiver HELD ou WANTED com clock menor, adiciona em sua fila
 		} else if process_state == "HELD" || process_state == "WANTED" && received_clock > myClock {
+			mutex.Lock()
 			queue = append(queue, received_id)
+			mutex.Unlock()
 			fmt.Println("Queue request without replying")
+			fmt.Println(queue)
 
 			// Quando receber um request, atualizar o clock para ficar coerente com quem enviou
 			receivedClock, _ := strconv.Atoi(string(buf[0:n]))
-			myClock = int(math.Max(float64(myClock), float64(receivedClock)) + 1)
-			fmt.Println("My new clock is: ", myClock)
+			mutex.Lock()
+			myClock = obtain_max(myClock, receivedClock) + 1
+			mutex.Unlock()
+			fmt.Println("My new clock after request (a): ", myClock)
 		} else {
 			// se empatarem no clock, ganha o menor id
 			priority_id := received_id
@@ -126,8 +145,12 @@ func doServerJob() {
 				priority_id = int(math.Min(float64(received_id), float64(myId)))
 			}
 
+			mutex.Lock()
+			myClock = obtain_max(myClock, received_clock) + 1
+			mutex.Unlock()
 			// Quando enviar um reply, não incrementar o clock
-			fmt.Println("RELEASED or WANTED with lower timestamp: need reply")
+			fmt.Println("My new clock after request (b): ", myClock)
+			fmt.Println("Reply due to RELEASED or WANTED with lower timestamp")
 			myId_str := strconv.Itoa(myId)
 			myClock_str := strconv.Itoa(myClock)
 			rep_msg := myId_str + ":" + myClock_str + ":" + "REPLY"
@@ -142,8 +165,11 @@ func doClientJob(otherProcess int, type_message string, x string) {
 	// para entrar na CS
 	if otherProcess == 0 && process_state == "RELEASED" {
 		// Altera de RELEASED para WANTED
+		mutex.Lock()
 		process_state = "WANTED"
 		myClock++
+		mutex.Unlock()
+		fmt.Println("WANTED")
 		myId_str := strconv.Itoa(myId)
 		myClock_str := strconv.Itoa(myClock)
 		req_msg := myId_str + ":" + myClock_str + ":" + "REQUEST"
@@ -161,7 +187,6 @@ func doClientJob(otherProcess int, type_message string, x string) {
 		fmt.Println("entrada ignorada!")
 	}
 }
-
 func initConnections() {
 	// Inicializando variáveis globais
 	ConnMap = make(map[int]*net.UDPConn)
@@ -172,10 +197,12 @@ func initConnections() {
 	idMap[3] = 10004
 
 	// Inicializando o processo
+	mutex.Lock()
 	process_state = "RELEASED"
 	myClock = 0
 	myId, _ = strconv.Atoi(os.Args[1])
 	myPort = ":" + strconv.Itoa(idMap[myId])
+	mutex.Unlock()
 
 	// Obtendo os outros processos
 	nServers = len(os.Args) - 2

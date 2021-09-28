@@ -23,9 +23,9 @@ func doCSServerJob(CSConn *net.UDPConn) {
 		//Ler (uma vez somente) da conexão UDP a mensagem
 		//Escrever na tela a msg recebida (indicando o
 		//endereço de quem enviou)
-		n, addr, err := CSConn.ReadFromUDP(buf)
+		n, _, err := CSConn.ReadFromUDP(buf)
 		received_msg := strings.Split(string(buf[0:n]), ":")
-		fmt.Println("Received id:", received_msg[0], "clock:", received_msg[1], "message:", received_msg[2], "from ", addr)
+		fmt.Println(received_msg)
 
 		if err != nil {
 			fmt.Println("Error: ", err)
